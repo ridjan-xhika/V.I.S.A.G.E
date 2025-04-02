@@ -148,6 +148,7 @@ Ensure you have the following dependencies installed:
 - `/status` – Get the current status of the V.I.S.A.G.E system.
 - `/snapshot` – Capture and send a snapshot from the camera.
 - `/video` – Record and send a short video.
+- `/live` – Record and send live camera
 - `/settings` – Adjust V.I.S.A.G.E system configurations.
 - `/help` – Show command descriptions.
 
