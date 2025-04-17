@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackContext
 import time
+import opencv
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -36,6 +37,8 @@ async def status(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text("Bot is ruasync def nning and ready to assist you!")
     latence = time.perf_counter() - start
     await update.message.reply_text(f"Latency: {latence:.2f} seconds")
+
+async def snapshot(update: Update, context: CallbackContext) -> None:
 
 
 def run_bot():
