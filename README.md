@@ -41,25 +41,14 @@ The **AI Security Camera** is a smart surveillance system that uses motion detec
 - Local Storage
 - Optional Cloud Backup
 
----
-
-## Timeline
-| Task                    | Time Estimate | Difficulty |
-|-------------------------|---------------|------------|
-| Video Streaming + Flask API | 3 Days      | 🔥       |
-| Motion Detection        | 4 Days      | 🔥🔥    |
-| Face Detection          | 5 Days      | 🔥🔥🔥  |
-| Telegram Bot Setup      | 3 Days      | 🔥       |
-| Local Storage           | 2 Days      | 🔥       |
-| Cloud Backup (Optional)  | 3 Days      | 🔥       |
-| Testing + Debugging     | 4 Days      | 🔥🔥    |
-| Report Writing          | 4 Days      | 🔥       |
 
 ---
 
 ## Folder Structure
 ```
 📁 AI_Security_Camera
+│
+├── main.py
 │
 ├── backend/
 │   ├── app.py               # Flask API
@@ -155,7 +144,7 @@ Ensure you have the following dependencies installed:
 ## Deployment
 For continuous operation, you can run the bot as a background service:
 ```bash
-nohup python bot.py &
+nohup python main.py &
 ```
 Or use a process manager like `systemd` or `pm2`.
 
@@ -171,8 +160,8 @@ Feel free to submit pull requests or report issues. Make sure to follow coding g
 This project is licensed under the **MIT License**.
 
 ---
-**Author**: Your Name  
+**Author**: Ridjan Xhika
 **Project**: V.I.S.A.G.E  
-**Contact**: your.email@example.com
+**Contact**: ridjan.xhika@epitech.eu
 
 
