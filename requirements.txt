@@ -1,3 +1,0 @@
-python-dotenv
-opencv-python
-python-telegram-bot==20.*
