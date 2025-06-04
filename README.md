@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yourusername/VISAGE-Telegram-Bot/main/assets/logo.png" alt="V.I.S.A.G.E Logo" width="200">
+  <img src="https://raw.githubusercontent.com/ridjan-xhika/V.I.S.A.G.E/main/assets/logo.png" alt="V.I.S.A.G.E Logo" width="200">
 </p>
 
 <h1 align="center">V.I.S.A.G.E</h1>
