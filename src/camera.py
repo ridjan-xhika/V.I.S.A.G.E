@@ -5,29 +5,37 @@ import time
 import os
 from datetime import datetime
 from collections import deque
+import logging
+from contextlib import contextmanager
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class LiveCamera:
-    def __init__(self, camera_index=0, width=640, height=480, fps=30):
+    def __init__(self, camera_index=0, width=640, height=480, fps=30, enable_logging=True):
         """
-        Initialize the live camera with facial detection capabilities
+        Initialize the live camera
         
         Args:
             camera_index (int): Camera device index (0 for default camera)
             width (int): Frame width
             height (int): Frame height  
             fps (int): Frames per second
+            enable_logging (bool): Enable detailed logging
         """
         self.camera_index = camera_index
         self.width = width
         self.height = height
         self.fps = fps
+        self.enable_logging = enable_logging
+        
+        # Camera and threading
         self.cap = None
         self.current_frame = None
-        self.processed_frame = None
+        self.raw_frame = None
         self.is_running = False
         self.frame_lock = threading.Lock()
-        self.processing_enabled = True
-        self.face_detection_enabled = True
         
         # Performance tracking
         self.frame_count = 0
@@ -35,58 +43,33 @@ class LiveCamera:
         self.max_errors = 5
         self.fps_counter = deque(maxlen=30)
         self.last_fps_time = time.time()
+        self.start_time = time.time()
         
-        # Face detection setup
-        self.setup_face_detection()
+        # Threading
+        self.capture_thread = None
         
-        # Frame processing thread
-        self.process_thread = None
-        
-        print(f"🔧 Initializing Optimized LiveCamera: {width}x{height} @ {fps}fps")
+        if self.enable_logging:
+            logger.info(f"🔧 Initializing LiveCamera: {width}x{height} @ {fps}fps")
         
         # Initialize camera
         if self.initialize_camera():
-            # Start capture and processing threads
+            # Start capture thread
             self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-            self.process_thread = threading.Thread(target=self._processing_loop, daemon=True)
             self.is_running = True
             self.capture_thread.start()
-            self.process_thread.start()
-            print(f"✅ Optimized LiveCamera initialized successfully")
+            
+            if self.enable_logging:
+                logger.info("✅ LiveCamera initialized successfully")
         else:
-            print(f"❌ LiveCamera initialization failed")
+            if self.enable_logging:
+                logger.error("❌ LiveCamera initialization failed")
             raise Exception("Failed to initialize camera")
-    
-    def setup_face_detection(self):
-        """Initialize face detection models"""
-        try:
-            # Load Haar cascade for face detection (faster)
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            self.face_cascade = cv2.CascadeClassifier(cascade_path)
-            
-            # Load DNN model for more accurate detection (optional)
-            try:
-                # You can download these from OpenCV's GitHub or use local paths
-                self.net = cv2.dnn.readNetFromTensorflow(
-                    'opencv_face_detector_uint8.pb',
-                    'opencv_face_detector.pbtxt'
-                )
-                self.use_dnn = True
-                print("✅ DNN face detection model loaded")
-            except:
-                self.use_dnn = False
-                print("⚠️ DNN model not found, using Haar cascades only")
-            
-            print("✅ Face detection initialized")
-            
-        except Exception as e:
-            print(f"⚠️ Face detection setup error: {e}")
-            self.face_detection_enabled = False
     
     def initialize_camera(self):
         """Initialize the camera with optimal settings for performance"""
         try:
-            print(f"🔌 Connecting to camera {self.camera_index}...")
+            if self.enable_logging:
+                logger.info(f"🔌 Connecting to camera {self.camera_index}...")
             
             if self.cap is not None:
                 self.cap.release()
@@ -99,11 +82,12 @@ class LiveCamera:
                 try:
                     self.cap = cv2.VideoCapture(self.camera_index, backend)
                     if self.cap.isOpened():
-                        print(f"✅ Camera opened with backend {backend}")
+                        if self.enable_logging:
+                            logger.info(f"✅ Camera opened with backend {backend}")
                         break
                     else:
                         self.cap = None
-                except Exception as e:
+                except Exception:
                     continue
             
             if self.cap is None or not self.cap.isOpened():
@@ -115,125 +99,38 @@ class LiveCamera:
                 (cv2.CAP_PROP_FRAME_HEIGHT, self.height),
                 (cv2.CAP_PROP_FPS, self.fps),
                 (cv2.CAP_PROP_BUFFERSIZE, 1),  # Minimize latency
-                (cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')),  # Use MJPEG for better performance
+                (cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')),
             ]
             
             for prop, value in properties:
                 try:
                     self.cap.set(prop, value)
-                except:
+                except Exception:
                     pass
             
             # Test capture
             for attempt in range(3):
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
-                    print(f"✅ Camera test successful - Shape: {frame.shape}")
+                    if self.enable_logging:
+                        logger.info(f"✅ Camera test successful - Shape: {frame.shape}")
                     with self.frame_lock:
                         self.current_frame = frame.copy()
+                        self.raw_frame = frame.copy()
                     return True
                 time.sleep(0.1)
             
             return False
             
         except Exception as e:
-            print(f"❌ Camera initialization error: {e}")
+            if self.enable_logging:
+                logger.error(f"❌ Camera initialization error: {e}")
             return False
-    
-    def detect_faces_haar(self, frame):
-        """Fast face detection using Haar cascades"""
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30),
-            flags=cv2.CASCADE_SCALE_IMAGE
-        )
-        return faces
-    
-    def detect_faces_dnn(self, frame):
-        """More accurate face detection using DNN"""
-        if not self.use_dnn:
-            return []
-        
-        h, w = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300), [104, 117, 123])
-        self.net.setInput(blob)
-        detections = self.net.forward()
-        
-        faces = []
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            if confidence > 0.5:  # Confidence threshold
-                x1 = int(detections[0, 0, i, 3] * w)
-                y1 = int(detections[0, 0, i, 4] * h)
-                x2 = int(detections[0, 0, i, 5] * w)
-                y2 = int(detections[0, 0, i, 6] * h)
-                faces.append((x1, y1, x2-x1, y2-y1, confidence))
-        
-        return faces
-    
-    def process_frame_with_faces(self, frame):
-        """Process frame with face detection and annotations"""
-        if not self.face_detection_enabled:
-            return frame
-        
-        try:
-            # Use Haar cascades for real-time detection (faster)
-            faces = self.detect_faces_haar(frame)
-            
-            # Draw rectangles around faces
-            for (x, y, w, h) in faces:
-                # Draw face rectangle
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                
-                # Add face label
-                cv2.putText(frame, 'Face', (x, y-10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                
-                # Optional: Add confidence or other info
-                face_center = (x + w//2, y + h//2)
-                cv2.circle(frame, face_center, 3, (0, 255, 0), -1)
-            
-            # Add face count
-            if len(faces) > 0:
-                cv2.putText(frame, f'Faces: {len(faces)}', (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            return frame
-            
-        except Exception as e:
-            print(f"⚠️ Face processing error: {e}")
-            return frame
-    
-    def _processing_loop(self):
-        """Separate thread for frame processing to avoid blocking capture"""
-        print("🎨 Frame processing loop started")
-        
-        while self.is_running:
-            try:
-                if self.current_frame is not None and self.processing_enabled:
-                    with self.frame_lock:
-                        frame_to_process = self.current_frame.copy()
-                    
-                    # Process frame with face detection
-                    processed = self.process_frame_with_faces(frame_to_process)
-                    
-                    with self.frame_lock:
-                        self.processed_frame = processed
-                else:
-                    time.sleep(0.01)  # Small delay when no frame to process
-                    
-            except Exception as e:
-                print(f"❌ Processing loop error: {e}")
-                time.sleep(0.1)
-        
-        print("🛑 Frame processing loop stopped")
     
     def _capture_loop(self):
         """Optimized capture loop with better performance"""
-        print("🎬 Optimized capture loop started")
+        if self.enable_logging:
+            logger.info("🎬 Capture loop started")
         
         target_interval = 1.0 / self.fps
         last_capture = 0
@@ -257,7 +154,8 @@ class LiveCamera:
                 
                 if ret and frame is not None:
                     with self.frame_lock:
-                        self.current_frame = frame
+                        self.current_frame = frame.copy()
+                        self.raw_frame = frame.copy()
                     
                     last_capture = current_time
                     self.frame_count += 1
@@ -267,24 +165,27 @@ class LiveCamera:
                     self.fps_counter.append(current_time)
                     
                     # Log performance occasionally
-                    if self.frame_count % (self.fps * 30) == 0:  # Every 30 seconds
+                    if self.enable_logging and self.frame_count % (self.fps * 30) == 0:  # Every 30 seconds
                         actual_fps = self.get_actual_fps()
-                        print(f"📊 Frames: {self.frame_count}, FPS: {actual_fps:.1f}")
+                        logger.info(f"📊 Frames: {self.frame_count}, FPS: {actual_fps:.1f}")
                 else:
                     self.error_count += 1
                     if self.error_count >= self.max_errors:
-                        print("❌ Too many capture errors, reconnecting...")
+                        if self.enable_logging:
+                            logger.warning("❌ Too many capture errors, reconnecting...")
                         if not self.reconnect_camera():
                             time.sleep(2)
                     
             except Exception as e:
                 self.error_count += 1
-                print(f"❌ Capture error: {e}")
+                if self.enable_logging:
+                    logger.error(f"❌ Capture error: {e}")
                 if self.error_count >= self.max_errors:
                     if not self.reconnect_camera():
                         time.sleep(2)
         
-        print("🛑 Capture loop stopped")
+        if self.enable_logging:
+            logger.info("🛑 Capture loop stopped")
     
     def get_actual_fps(self):
         """Calculate actual FPS"""
@@ -296,32 +197,34 @@ class LiveCamera:
             return (len(self.fps_counter) - 1) / time_span
         return 0
     
-    def get_current_frame(self, processed=True):
-        """Return the latest frame (processed or raw)"""
+    def get_current_frame(self, security_overlay=True):
+        """Return the latest raw frame with optional security overlay"""
         with self.frame_lock:
-            if processed and self.processed_frame is not None:
-                return self.processed_frame.copy()
-            elif self.current_frame is not None:
-                return self.current_frame.copy()
+            if self.current_frame is not None:
+                frame = self.current_frame.copy()
+                if security_overlay:
+                    frame = self.add_security_overlay(frame)
+                return frame
         return None
     
-    def toggle_face_detection(self):
-        """Toggle face detection on/off"""
-        self.face_detection_enabled = not self.face_detection_enabled
-        status = "enabled" if self.face_detection_enabled else "disabled"
-        print(f"👤 Face detection {status}")
-        return self.face_detection_enabled
+    def read_frame(self, security_overlay=True):
+        """Return current frame with optional security overlay - For bot commands"""
+        with self.frame_lock:
+            if self.current_frame is not None:
+                frame = self.current_frame.copy()
+                if security_overlay:
+                    frame = self.add_security_overlay(frame)
+                return True, frame
+        return False, None
     
-    def toggle_processing(self):
-        """Toggle frame processing on/off for performance"""
-        self.processing_enabled = not self.processing_enabled
-        status = "enabled" if self.processing_enabled else "disabled"
-        print(f"🎨 Frame processing {status}")
-        return self.processing_enabled
+    def read(self):
+        """Standard OpenCV-style read method"""
+        return self.read_frame()
     
     def reconnect_camera(self):
         """Optimized camera reconnection"""
-        print("🔄 Reconnecting camera...")
+        if self.enable_logging:
+            logger.info("🔄 Reconnecting camera...")
         try:
             if self.cap is not None:
                 self.cap.release()
@@ -329,12 +232,15 @@ class LiveCamera:
             
             return self.initialize_camera()
         except Exception as e:
-            print(f"❌ Reconnection error: {e}")
+            if self.enable_logging:
+                logger.error(f"❌ Reconnection error: {e}")
             return False
     
     def get_stats(self):
         """Get comprehensive camera statistics"""
         actual_fps = self.get_actual_fps()
+        uptime = time.time() - self.start_time
+        
         return {
             'frame_count': self.frame_count,
             'error_count': self.error_count,
@@ -343,14 +249,14 @@ class LiveCamera:
             'is_running': self.is_running,
             'camera_open': self.cap is not None and self.cap.isOpened() if self.cap else False,
             'has_current_frame': self.current_frame is not None,
-            'has_processed_frame': self.processed_frame is not None,
-            'face_detection_enabled': self.face_detection_enabled,
-            'processing_enabled': self.processing_enabled,
-            'use_dnn': getattr(self, 'use_dnn', False)
+            'has_raw_frame': self.raw_frame is not None,
+            'uptime': uptime,
+            'width': self.width,
+            'height': self.height
         }
     
-    def record_clip(self, duration=5.0, fps=None, with_faces=True):
-        """Record a video clip with optional face detection"""
+    def record_clip(self, duration=5.0, fps=None):
+        """Record a video clip"""
         if fps is None:
             fps = min(self.fps, 30)  # Limit recording FPS for file size
         
@@ -359,7 +265,7 @@ class LiveCamera:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             
             # Get frame dimensions
-            test_frame = self.get_current_frame(processed=False)
+            test_frame = self.get_current_frame()
             if test_frame is None:
                 return None
             
@@ -370,7 +276,8 @@ class LiveCamera:
             frame_interval = 1.0 / fps
             last_frame_time = 0
             
-            print(f"🎬 Recording {duration}s clip with face detection: {with_faces}")
+            if self.enable_logging:
+                logger.info(f"🎬 Recording {duration}s clip")
             
             while time.time() - start_time < duration:
                 current_time = time.time()
@@ -380,43 +287,124 @@ class LiveCamera:
                     time.sleep(0.01)
                     continue
                 
-                frame = self.get_current_frame(processed=with_faces)
+                frame = self.get_current_frame()
                 if frame is not None:
                     out.write(frame)
                     last_frame_time = current_time
             
             out.release()
-            print(f"✅ Clip recorded: {filename}")
+            if self.enable_logging:
+                logger.info(f"✅ Clip recorded: {filename}")
             return filename
             
         except Exception as e:
-            print(f"❌ Recording error: {e}")
+            if self.enable_logging:
+                logger.error(f"❌ Recording error: {e}")
             return None
+    
+    def add_security_overlay(self, frame):
+        """Add security camera style overlay with timestamp and info"""
+        h, w = frame.shape[:2]
+        
+        # Create semi-transparent overlay areas
+        overlay = frame.copy()
+        
+        # Top bar for camera info
+        cv2.rectangle(overlay, (0, 0), (w, 35), (0, 0, 0), -1)
+        # Bottom bar for timestamp
+        cv2.rectangle(overlay, (0, h-35), (w, h), (0, 0, 0), -1)
+        
+        # Blend overlay with original frame
+        frame = cv2.addWeighted(frame, 0.8, overlay, 0.2, 0)
+        
+        # Camera identification (top left)
+        camera_id = f"CAM-{self.camera_index:02d}"
+        cv2.putText(frame, camera_id, (10, 20), 
+                   cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 0), 1)
+        
+        # Recording indicator (top left, after camera ID)
+        cv2.circle(frame, (100, 15), 5, (0, 0, 255), -1)  # Red dot
+        cv2.putText(frame, "REC", (115, 20), 
+                   cv2.FONT_HERSHEY_DUPLEX, 0.5, (0, 0, 255), 1)
+        
+        # Resolution info (top right)
+        resolution = f"{w}x{h}"
+        text_size = cv2.getTextSize(resolution, cv2.FONT_HERSHEY_DUPLEX, 0.5, 1)[0]
+        cv2.putText(frame, resolution, (w - text_size[0] - 10, 20), 
+                   cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1)
+        
+        # Timestamp (bottom left) - Security camera style
+        now = datetime.now()
+        date_str = now.strftime("%d/%m/%Y")
+        time_str = now.strftime("%H:%M:%S")
+        
+        cv2.putText(frame, f"{date_str} {time_str}", (10, h - 10), 
+                   cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 0), 1)
+        
+        # Frame counter (bottom right)
+        frame_text = f"FRAME: {self.frame_count:08d}"
+        text_size = cv2.getTextSize(frame_text, cv2.FONT_HERSHEY_DUPLEX, 0.4, 1)[0]
+        cv2.putText(frame, frame_text, (w - text_size[0] - 10, h - 10), 
+                   cv2.FONT_HERSHEY_DUPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Add corner brackets for security camera look
+        bracket_size = 20
+        bracket_thickness = 2
+        bracket_color = (0, 255, 0)
+        
+        # Top-left corner
+        cv2.line(frame, (5, 40), (5, 40 + bracket_size), bracket_color, bracket_thickness)
+        cv2.line(frame, (5, 40), (5 + bracket_size, 40), bracket_color, bracket_thickness)
+        
+        # Top-right corner
+        cv2.line(frame, (w-5, 40), (w-5, 40 + bracket_size), bracket_color, bracket_thickness)
+        cv2.line(frame, (w-5, 40), (w-5 - bracket_size, 40), bracket_color, bracket_thickness)
+        
+        # Bottom-left corner
+        cv2.line(frame, (5, h-40), (5, h-40 - bracket_size), bracket_color, bracket_thickness)
+        cv2.line(frame, (5, h-40), (5 + bracket_size, h-40), bracket_color, bracket_thickness)
+        
+        # Bottom-right corner
+        cv2.line(frame, (w-5, h-40), (w-5, h-40 - bracket_size), bracket_color, bracket_thickness)
+        cv2.line(frame, (w-5, h-40), (w-5 - bracket_size, h-40), bracket_color, bracket_thickness)
+        
+        return frame
+    
+    def is_opened(self):
+        """Check if camera is opened"""
+        return self.cap is not None and self.cap.isOpened() if self.cap else False
+    
+    def release(self):
+        """Release camera resources"""
+        self.stop()
     
     def stop(self):
         """Stop the camera with proper cleanup"""
-        print("🛑 Stopping optimized camera...")
+        if self.enable_logging:
+            logger.info("🛑 Stopping camera...")
+        
         self.is_running = False
         
-        # Wait for threads to finish
-        if hasattr(self, 'capture_thread') and self.capture_thread.is_alive():
+        # Wait for thread to finish
+        if hasattr(self, 'capture_thread') and self.capture_thread and self.capture_thread.is_alive():
             self.capture_thread.join(timeout=2)
-        
-        if hasattr(self, 'process_thread') and self.process_thread and self.process_thread.is_alive():
-            self.process_thread.join(timeout=2)
         
         if self.cap and self.cap.isOpened():
             self.cap.release()
         
-        print("✅ Optimized camera stopped")
+        if self.enable_logging:
+            logger.info("✅ Camera stopped")
     
     def __del__(self):
         """Clean up resources"""
-        self.stop()
+        try:
+            self.stop()
+        except Exception:
+            pass
 
-def take_snapshot(with_faces=True):
-    """Standalone function to take a quick snapshot with face detection"""
-    print("📸 Taking snapshot with face detection...")
+def take_snapshot(security_overlay=True):
+    """Standalone function to take a quick snapshot with security camera styling"""
+    logger.info("📸 Taking security camera snapshot...")
     try:
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
@@ -434,26 +422,42 @@ def take_snapshot(with_faces=True):
             if ret and frame is not None:
                 cap.release()
                 
-                # Add face detection if requested
-                if with_faces:
-                    try:
-                        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-                        face_cascade = cv2.CascadeClassifier(cascade_path)
-                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                        faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
-                        
-                        for (x, y, w, h) in faces:
-                            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                            cv2.putText(frame, 'Face', (x, y-10), 
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                        
-                        if len(faces) > 0:
-                            cv2.putText(frame, f'Faces: {len(faces)}', (10, 30), 
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    except Exception as e:
-                        print(f"⚠️ Face detection in snapshot failed: {e}")
+                if security_overlay:
+                    # Add security camera overlay
+                    h, w = frame.shape[:2]
+                    
+                    # Create overlay areas
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (0, 0), (w, 35), (0, 0, 0), -1)
+                    cv2.rectangle(overlay, (0, h-35), (w, h), (0, 0, 0), -1)
+                    frame = cv2.addWeighted(frame, 0.8, overlay, 0.2, 0)
+                    
+                    # Camera info
+                    cv2.putText(frame, "CAM-00", (10, 20), 
+                               cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 0), 1)
+                    cv2.circle(frame, (100, 15), 5, (0, 0, 255), -1)
+                    cv2.putText(frame, "REC", (115, 20), 
+                               cv2.FONT_HERSHEY_DUPLEX, 0.5, (0, 0, 255), 1)
+                    
+                    # Timestamp
+                    now = datetime.now()
+                    timestamp = f"{now.strftime('%d/%m/%Y')} {now.strftime('%H:%M:%S')}"
+                    cv2.putText(frame, timestamp, (10, h - 10), 
+                               cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 0), 1)
+                    
+                    # Corner brackets
+                    bracket_size = 20
+                    bracket_color = (0, 255, 0)
+                    cv2.line(frame, (5, 40), (5, 60), bracket_color, 2)
+                    cv2.line(frame, (5, 40), (25, 40), bracket_color, 2)
+                    cv2.line(frame, (w-5, 40), (w-5, 60), bracket_color, 2)
+                    cv2.line(frame, (w-5, 40), (w-25, 40), bracket_color, 2)
+                    cv2.line(frame, (5, h-40), (5, h-60), bracket_color, 2)
+                    cv2.line(frame, (5, h-40), (25, h-40), bracket_color, 2)
+                    cv2.line(frame, (w-5, h-40), (w-5, h-60), bracket_color, 2)
+                    cv2.line(frame, (w-5, h-40), (w-25, h-40), bracket_color, 2)
                 
-                print("✅ Snapshot with face detection captured")
+                logger.info("✅ Security camera snapshot captured")
                 return frame
             time.sleep(0.1)
         
@@ -461,5 +465,8 @@ def take_snapshot(with_faces=True):
         return None
         
     except Exception as e:
-        print(f"❌ Snapshot error: {e}")
+        logger.error(f"❌ Snapshot error: {e}")
         return None
+
+# Compatibility alias for existing code
+Camera = LiveCamera
