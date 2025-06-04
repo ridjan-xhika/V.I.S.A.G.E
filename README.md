@@ -2,7 +2,6 @@
   <img src="https://raw.githubusercontent.com/ridjan-xhika/V.I.S.A.G.E/main/assets/logo.png" alt="V.I.S.A.G.E Logo" width="200">
 </p>
 
-<h1 align="center">V.I.S.A.G.E</h1>
 <p align="center">
   <strong>AI-Powered Security Camera System</strong>  
   <br>
