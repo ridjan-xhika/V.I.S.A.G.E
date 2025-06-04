@@ -129,8 +129,8 @@ Properly modularized, this system can be extended to other APIs, cloud services,
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/yourusername/VISAGE-Security-Camera.git
-   cd VISAGE-Security-Camera
+   git clone https://github.com/ridjan-xhika/V.I.S.A.G.E
+   cd V.I.S.A.G.E
    ```
 
 2. **Create & Activate Virtual Environment**
@@ -223,16 +223,6 @@ Once both Flask and the Telegram Bot are running:
 
 ---
 
-## 🎨 Example Screenshots
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/yourusername/VISAGE-Security-Camera/main/assets/snapshot_example.jpg" alt="Snapshot Example" width="500">
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/yourusername/VISAGE-Security-Camera/main/assets/telegram_alert.jpg" alt="Telegram Alert" width="500">
-</p>
-
----
 
 ## 🛠️ Configuration Options
 
